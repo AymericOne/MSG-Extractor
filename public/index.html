@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Upload .msg</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>Upload .msg</h1>
+
+  <div class="upload-area" id="uploadArea">
+    <p>Drag & drop your .msg here</p>
+    <span>OR</span>
+    <button id="browseBtn">Browse</button>
+    <input type="file" id="fileInput" accept=".msg" hidden />
+  </div>
+
+  <div id="statusMsg" class="hidden"></div>
+
+  <div id="tableSection" class="hidden">
+    <h2>Extracted Files</h2>
+    <button id="selectAllBtn">Select All</button>
+    <button id="downloadSelectedBtn">Download Selected</button>
+
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Path (Click to Download)</th>
+          <th>Type</th>
+          <th>Size (KB)</th>
+        </tr>
+      </thead>
+      <tbody id="filesTableBody"></tbody>
+    </table>
+  </div>
+
+  <div id="hoverPreview"></div>
+
+  <script>
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const browseBtn = document.getElementById('browseBtn');
+    const statusMsg = document.getElementById('statusMsg');
+    const tableSection = document.getElementById('tableSection');
+    const filesTableBody = document.getElementById('filesTableBody');
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    const downloadSelectedBtn = document.getElementById('downloadSelectedBtn');
+    const hoverPreview = document.getElementById('hoverPreview');
+
+    let currentFolderId = null;
+    let extractedFiles = [];
+
+    // DRAG & DROP
+    ;['dragenter','dragover','dragleave','drop'].forEach(ev => {
+      uploadArea.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); });
+    });
+    ['dragenter','dragover'].forEach(ev => {
+      uploadArea.addEventListener(ev, () => uploadArea.classList.add('highlight'));
+    });
+    ['dragleave','drop'].forEach(ev => {
+      uploadArea.addEventListener(ev, () => uploadArea.classList.remove('highlight'));
+    });
+    uploadArea.addEventListener('drop', e => {
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+
+    // BROWSE
+    browseBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', e => {
+      if (e.target.files.length) handleFile(e.target.files[0]);
+    });
+
+    async function handleFile(file) {
+      if (!file.name.endsWith('.msg')) {
+        alert('Please upload a .msg file');
+        return;
+      }
+      tableSection.classList.add('hidden');
+      statusMsg.classList.remove('hidden');
+      statusMsg.innerHTML = `<p>Extracting data from ${file.name}...</p>`;
+
+      const formData = new FormData();
+      formData.append('msgfile', file);
+
+      try {
+        const response = await fetch('/extract', {
+          method: 'POST',
+          body: formData
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const data = await response.json();
+        currentFolderId = data.folderId;
+        extractedFiles = data.attachments;
+        renderFilesTable(extractedFiles);
+        statusMsg.classList.add('hidden');
+        tableSection.classList.remove('hidden');
+      } catch (err) {
+        statusMsg.innerHTML = `<p style="color:red;">Error: ${err.message}</p>`;
+      }
+    }
+
+    function renderFilesTable(files) {
+      filesTableBody.innerHTML = '';
+      files.forEach(fileObj => {
+        const tr = document.createElement('tr');
+
+        // checkbox
+        const tdCheck = document.createElement('td');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = fileObj.relativePath;
+        tdCheck.appendChild(checkbox);
+
+        // clickable link
+        const tdPath = document.createElement('td');
+        const link = document.createElement('a');
+        link.href = fileObj.downloadUrl; // direct download route
+        link.textContent = fileObj.relativePath;
+        link.classList.add('hover-path');
+        // We still do hover preview
+        link.addEventListener('mouseenter', () => showPreview(fileObj));
+        link.addEventListener('mouseleave', () => hidePreview());
+        tdPath.appendChild(link);
+
+        // type
+        const tdType = document.createElement('td');
+        tdType.textContent = fileObj.mime;
+
+        // size
+        const tdSize = document.createElement('td');
+        tdSize.textContent = Math.round(fileObj.size / 1024);
+
+        tr.appendChild(tdCheck);
+        tr.appendChild(tdPath);
+        tr.appendChild(tdType);
+        tr.appendChild(tdSize);
+
+        filesTableBody.appendChild(tr);
+      });
+    }
+
+    // top-right preview
+    async function showPreview(fileObj) {
+      hoverPreview.style.display = 'block';
+      hoverPreview.innerHTML = 'Loading...';
+      if (fileObj.mime.startsWith('image/')) {
+        // show image
+        hoverPreview.innerHTML = `<img src="${fileObj.previewUrl}" class="preview-img"/>`;
+      } else if (fileObj.mime.startsWith('text')) {
+        try {
+          const resp = await fetch(fileObj.previewUrl);
+          if (!resp.ok) throw new Error('Unable to fetch text');
+          let text = await resp.text();
+          if (text.length > 500) text = text.slice(0, 500) + '...';
+          hoverPreview.textContent = text;
+        } catch {
+          hoverPreview.textContent = 'Error loading text preview.';
+        }
+      } else {
+        hoverPreview.textContent = 'No preview available.';
+      }
+    }
+
+    function hidePreview() {
+      hoverPreview.style.display = 'none';
+      hoverPreview.innerHTML = '';
+    }
+
+    // SELECT ALL
+    selectAllBtn.addEventListener('click', () => {
+      filesTableBody.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+        chk.checked = true;
+      });
+    });
+
+    // DOWNLOAD SELECTED
+    downloadSelectedBtn.addEventListener('click', async () => {
+      const selected = [];
+      filesTableBody.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+        if (chk.checked) selected.push(chk.value);
+      });
+      if (!selected.length) {
+        alert('No files selected!');
+        return;
+      }
+      try {
+        const response = await fetch('/zip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId: currentFolderId, files: selected })
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = 'download.zip';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        alert('Error downloading zip: ' + err.message);
+      }
+    });
+  </script>
+</body>
+</html>

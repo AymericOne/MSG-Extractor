@@ -1,0 +1,17 @@
+{
+  "name": "msg-extractor-app",
+  "version": "1.0.0",
+  "description": "Extract attachments from .msg files, then zip them.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "1.4.5-lts.2",
+    "archiver": "^5.3.1"
+  },
+  "engines": {
+    "node": "16.x"
+  }
+}
